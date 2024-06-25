@@ -1,146 +1,255 @@
+#include <Servo.h> 
 
-#include <HCSR04.h>
-#include <Servo.h>
+// Ultrasonic sensor pins
+#define trig 2
+#define echo 4
 
-// Define Motor Pin
-const int Motor_L_F = 2;
-const int Motor_L_B = 3;
-const int Motor_R_F = 4;
-const int Motor_R_B = 5;
+// RGB led pins 
+#define LR 9       // Led Right
+#define LC 13     // Led Center
+#define LL 10     // Led Left
 
-// Define Ultrasonic Sensor Pin
-#define Echo  7
-#define Trig  8
+#define LRR A3   // Led Right Red
+#define LCR A2   // Led Center Red
+#define LLR A1  // Led Left Red
 
-// Variable to store distance
-int Front_D = 0;
-int Left_D = 0;
-int Right_D = 0;
+// Motor control pins
+#define LEFT_MOTOR_PIN1 8
+#define LEFT_MOTOR_PIN2 7
+#define RIGHT_MOTOR_PIN1 12
+#define RIGHT_MOTOR_PIN2 11
 
-int Max_D = 50;  // Max distance to obastacle 
+#define ENA 6 // Enable A pin for motor speed control
+#define ENB 3 // Enable B pin for motor speed control
 
+// Distance thresholds for obstacle detection
+//#define MAX_DISTANCE 80
+#define MIN_DISTANCE_BACK 12
 
-UltraSonicDistanceSensor distanceSensor(Trig, Echo);  // Initialize sensor
+//float timeOut = 2*(MAX_DISTANCE+10)/100/340*1000000;
+// Maximum and minimum motor speeds
+#define MAX_SPEED 100
+#define MIN_SPEED 75
 
-Servo Servo_1;  // create servo object to control a servo
-int pos = 0;    // variable to store the servo position
-
+Servo servoLook;
 
 void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(9600); 
+  // Set motor control pins as outputs
+  pinMode(LEFT_MOTOR_PIN1, OUTPUT);
+  pinMode(LEFT_MOTOR_PIN2, OUTPUT);
+  pinMode(RIGHT_MOTOR_PIN1, OUTPUT);
+  pinMode(RIGHT_MOTOR_PIN2, OUTPUT);
 
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);
+
+  pinMode(LR, OUTPUT);
+  pinMode(LC, OUTPUT);
+  pinMode(LL, OUTPUT);
+
+  pinMode(LRR, OUTPUT);
+  pinMode(LCR, OUTPUT);
+  pinMode(LLR, OUTPUT);
+
+  digitalWrite(LR, LOW);
+  digitalWrite(LC, LOW);
+  digitalWrite(LL, LOW);
+
+  analogWrite(LRR, 0);
+  analogWrite(LCR, 0);
+  analogWrite(LLR, 0);
+
+  servoLook.attach(5);
+  //Set the Trig pins as output pins
+  pinMode(trig, OUTPUT);
   
-  // Define Motor Pin as output
-  pinMode(Motor_L_F, OUTPUT);
-  pinMode(Motor_L_B, OUTPUT);
-  pinMode(Motor_R_F, OUTPUT);
-  pinMode(Motor_R_B, OUTPUT);
+  //Set the Echo pins as input pins
+  pinMode(echo, INPUT);
 
-  Servo_1.attach(9);  // attaches the servo on pin 9 to the servo object
-  int pos = 90;
-  Servo_1.write(pos);
-  delay(1000);
-
+  analogWrite(ENA, 53.5); // speed for motor A  0-LOW speed, 255-Full speed
+  analogWrite(ENB, 45); // speed for motor B
   
+  // Initialize the serial communication for debugging
+  Serial.begin(9600);
 }
 
 void loop() {
-    // put your main code here, to run repeatedly:
-   Front_D = distanceSensor.measureDistanceCm(); // measuring fornt distance  
-   if (Front_D < Max_D)
+
+  servoLook.write(90);
+  delay(750);
+  int distance = getDistance();
+  if (distance >= MIN_DISTANCE_BACK) {
+    
+    moveForward();
+   
+    Serial.println("forward");
+  } 
+   while(distance >= MIN_DISTANCE_BACK)
    {
-     Stop();
-     Get_D();     
-     if(Right_D > Max_D)
-     {
-       Right();
-       delay(400);
-       Forward();
-     }
-     else if ( Left_D > Max_D)
-     {
-       Left();
-       delay(400);
-       Forward();     
-     }     
-     else  {           
-       Back();
-       delay (500);
-       Stop();      
-      }
+    distance = getDistance();
+    delay(50);
    }
-   else{   
-    Forward();   
-   } 
+   Stop(); 
+   int turnDir = checkDirection();
+   Serial.println(turnDir);
+   switch(turnDir)
+   {
+    case 0:                                       //Turn left
+    Serial.println("Left");
+      turnLeft();
+      delay(425);
+      Stop();
+      break;
+    
+    case 2:                                       //Turn right
+    Serial.println("Right");
+      turnRight();
+      delay(415);
+      Stop();
+      break;
+      
+    case 3:                                       //move forward
+    Serial.println("Forward");
+     moveForward();
+      break;
+    }
 }
 
+int getDistance()                                   //Measure the distance to an object
+{
+  unsigned long pulseTime;                          //Create a variable to store the pulse travel time
+  int distance;                                     //Create a variable to store the calculated distance
+  digitalWrite(trig, HIGH);                         //Generate a 10 microsecond pulse
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+  pulseTime = pulseIn(echo, HIGH);         //Measure the time for the pulse to return
+  distance  = pulseTime / 29 / 2;         //Calculate the object distance based on the pulse time
+  Serial.println(distance);
+  return distance;
+}
 
-void Forward(){
-  // Run Left Motor In Forward Direction
-  digitalWrite(Motor_L_F, HIGH);
-  digitalWrite(Motor_L_B, LOW);
+int checkDirection()                                            //Check the left and right directions and decide which way to turn
+{
+  int distances [3] = {0,0,0};                                    //Left ,right and Front distances
+  int turnDir;                                               //Direction to turn, 0 left, 1 turn around, 2 right, 3 forward
+  servoLook.write(180);                                         //Turn servo to look left
+  delay(500);
+  distances [0] = getDistance();                                //Get the left object distance
 
-  //Run Right Motor in Forward Direction
-  digitalWrite(Motor_R_F, HIGH);
-  digitalWrite(Motor_R_B, LOW);
+  servoLook.write(90);                                         //Turn servo to look left
+  delay(500);
+  distances [3] = getDistance();
+  servoLook.write(0);                                           //Turn servo to look right
+  delay(1000);
+  distances [1] = getDistance();                                //Get the right object distance
+  if (distances[0]<=25 && distances[1]<=25)                   //If both directions are blocked, move forward
+    turnDir = 3;                                             
+  else if (distances[0]>=distances[1])                          //If left has more space, turn left
+    turnDir = 0;  //left
+  else if (distances[0]<distances[1])                           //If right has more space, turn right
+    turnDir = 2;  //right
+   //else if (distances[0]<=50 && distances[1]<=50 && distances[3]<=50)    //If All directions are blocked, turn around
+    //turnDir = 1;  
+  return turnDir;
+}
+
+// Motor control functions
+void moveForward() {
+ 
+  analogWrite(ENA, 60.5); //  speed for motor A
+  analogWrite(ENB, 52); //   speed for motor B
+
+  digitalWrite(LR, HIGH);
+  digitalWrite(LC, HIGH);      // All Green light turn on
+  digitalWrite(LL, HIGH);
+
+  analogWrite(LRR, 0);
+  analogWrite(LCR, 0);       // All Red light turn off
+  analogWrite(LLR, 0);
   
-  }
+  digitalWrite(LEFT_MOTOR_PIN1, LOW);
+  digitalWrite(LEFT_MOTOR_PIN2, HIGH);
+  digitalWrite(RIGHT_MOTOR_PIN1, LOW);
+  digitalWrite(RIGHT_MOTOR_PIN2, HIGH);
+}
 
-void Right(){
-  //Stop Right Motor
-  digitalWrite(Motor_R_F, LOW);
-  digitalWrite(Motor_R_B, LOW);
+void moveBackward() {
+  digitalWrite(LR, LOW);
+  digitalWrite(LC, LOW);        // All Green light turn off
+  digitalWrite(LL, LOW);
 
-  //Run Left Motor in Forward Direction
-  digitalWrite(Motor_L_F, HIGH);
-  digitalWrite(Motor_L_B, LOW);
+  analogWrite(LRR, 255);
+  analogWrite(LCR, 255);       // All Red light turn on
+  analogWrite(LLR, 255);
   
-  }
+ 
+  digitalWrite(LEFT_MOTOR_PIN1, HIGH);
+  digitalWrite(LEFT_MOTOR_PIN2, LOW);
+  digitalWrite(RIGHT_MOTOR_PIN1, HIGH);
+  digitalWrite(RIGHT_MOTOR_PIN2, LOW);
+}
 
-void Left(){
-  //Stop Left Motor
-  digitalWrite(Motor_L_F, LOW);
-  digitalWrite(Motor_L_B, LOW);
-
-  //Run Right Motor in Forward Direction
-  digitalWrite(Motor_R_F, HIGH);
-  digitalWrite(Motor_R_B, LOW);
+void turnRight() {
+  analogWrite(ENA, 100); //  speed for motor A
+  analogWrite(ENB, 90); //  speed for motor B
   
-  }
+  digitalWrite(LR, HIGH);
+  digitalWrite(LC, LOW);            // right side Green light turn on
+  digitalWrite(LL, LOW);
 
-void Back(){
-  // Run Left Motor In Forward Direction
-  digitalWrite(Motor_L_F, LOW);
-  digitalWrite(Motor_L_B, HIGH);
-
-  //Run Right Motor in Forward Direction
-  digitalWrite(Motor_R_F, LOW);
-  digitalWrite(Motor_R_B, HIGH);
+  analogWrite(LRR, 0);
+  analogWrite(LCR, 255);         // Left and Middel Red light turn on
+  analogWrite(LLR, 255);
   
-  }
-
-void Stop(){
-  // Run Left Motor In Forward Direction
-  digitalWrite(Motor_L_F, LOW);
-  digitalWrite(Motor_L_B, LOW);
-
-  //Run Right Motor in Forward Direction
-  digitalWrite(Motor_R_F, LOW);
-  digitalWrite(Motor_R_B, LOW);
   
-  }
+  digitalWrite(LEFT_MOTOR_PIN1, HIGH);
+  digitalWrite(LEFT_MOTOR_PIN2, LOW);
+  digitalWrite(RIGHT_MOTOR_PIN1, LOW);
+  digitalWrite(RIGHT_MOTOR_PIN2, HIGH);
+}
 
-void Get_D(){
-    Servo_1.write(0);   // Right Position 
-    delay(500);
-    Right_D = distanceSensor.measureDistanceCm();     
-    Servo_1.write(90);  // Front Positon 
-    delay(500);
-    Front_D = distanceSensor.measureDistanceCm();     
-    Servo_1.write(180); // Left position of servo
-    delay(500);
-    Left_D = distanceSensor.measureDistanceCm();  
-    Servo_1.write(90);  // back to front
-    delay(250);
-  }
+void turnLeft() {
+  analogWrite(ENA, 100); //  speed for motor A
+  analogWrite(ENB, 90); //  speed for motor B
+  
+  digitalWrite(LR, LOW);
+  digitalWrite(LC, LOW);         // left side Green light turn on
+  digitalWrite(LL, HIGH);
+
+  analogWrite(LRR, 255);
+  analogWrite(LCR, 255);         // right and Middel Red light turn on
+  analogWrite(LLR, 0);
+  
+ 
+  digitalWrite(LEFT_MOTOR_PIN1, LOW);
+  digitalWrite(LEFT_MOTOR_PIN2, HIGH);
+  digitalWrite(RIGHT_MOTOR_PIN1, HIGH);
+  digitalWrite(RIGHT_MOTOR_PIN2, LOW);
+}
+
+void Stop() {
+  digitalWrite(LR, LOW);
+  digitalWrite(LC, LOW);
+  digitalWrite(LL, LOW);
+
+  analogWrite(LRR, 255);
+  analogWrite(LCR, 255);
+  analogWrite(LLR, 255);
+  
+  analogWrite(ENA, 70.5); //  speed for motor A
+  analogWrite(ENB, 60); //  speed for motor B
+ 
+  digitalWrite(LEFT_MOTOR_PIN1, HIGH);
+  digitalWrite(LEFT_MOTOR_PIN2, LOW);
+  digitalWrite(RIGHT_MOTOR_PIN1, HIGH);
+  digitalWrite(RIGHT_MOTOR_PIN2, LOW);
+  delay(50);
+  
+  analogWrite(ENA, 0); //  speed for motor A
+  analogWrite(ENB, 0); //  speed for motor B
+  
+  digitalWrite(LEFT_MOTOR_PIN1, LOW);
+  digitalWrite(LEFT_MOTOR_PIN2, LOW);
+  digitalWrite(RIGHT_MOTOR_PIN1, LOW);
+  digitalWrite(RIGHT_MOTOR_PIN2, LOW);
+}
